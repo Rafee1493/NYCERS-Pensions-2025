@@ -138,7 +138,7 @@
 <div id="chart-wrap">
   <div id="chart-header">
     <h1>NYCERS Retirees Over $100,000 — Pension Rate</h1>
-    <p>Each dot is one retiree, positioned left-to-right by pension rate. Dots are spread vertically so none overlap. Hover or tap a dot for details.</p>
+    <p>Each dot is one retiree, positioned left-to-right by pension rate. Dots are spread vertically so none overlap. Click (or tap) a dot for details — click again to close.</p>
   </div>
   <div id="controls">
     <label for="search">Search name or agency:</label>
@@ -278,8 +278,11 @@ function render(DATA) {
   // event bindings (fast on 3,000+ points) and forgiving hit-testing so you
   // don't have to land the cursor pixel-perfectly on a 3px dot.
   const quadtree = d3.quadtree().x(d => d.x).y(d => d.y).addAll(nodes);
-  const HIT_RADIUS = 12;
+  const HIT_RADIUS = 14;
   let active = null;
+  let pinned = false; // true after a click; keeps the tooltip open regardless
+                       // of hover, since mousemove-based hover can be unreliable
+                       // inside embedded iframes on some hosting setups.
 
   function restoreSize(node) {
     d3.select(node.el).attr('r', node.data.__highlighted ? R * 1.9 : R);
@@ -295,6 +298,7 @@ function render(DATA) {
   }
 
   function clearActive() {
+    if (pinned) return;
     if (active) {
       restoreSize(active);
       active = null;
@@ -304,11 +308,28 @@ function render(DATA) {
 
   svg
     .on('mousemove', function(event) {
+      if (pinned) return;
       const [mx, my] = d3.pointer(event, svgNode);
       const found = quadtree.find(mx, my, HIT_RADIUS);
       if (found) setActive(found, event); else clearActive();
     })
     .on('mouseleave', clearActive)
+    .on('click', function(event) {
+      const [mx, my] = d3.pointer(event, svgNode);
+      const found = quadtree.find(mx, my, HIT_RADIUS);
+      if (found) {
+        if (pinned && active === found) {
+          pinned = false;
+          clearActive();
+        } else {
+          pinned = true;
+          setActive(found, event);
+        }
+      } else {
+        pinned = false;
+        clearActive();
+      }
+    })
     .on('touchstart touchmove', function(event) {
       const touch = event.touches[0];
       if (!touch) return;
