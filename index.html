@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NYCERS Retirees Over $100,000 — Pension Rate</title>
+<title>NYCERS Retirees Over $100,000 — Total Pension Benefit in 2025</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <style>
   html, body {
@@ -137,7 +137,7 @@
 <body>
 <div id="chart-wrap">
   <div id="chart-header">
-    <h1>NYCERS Retirees Over $100,000 — Pension Rate</h1>
+    <h1>NYCERS Retirees Over $100,000 — Total Pension Benefit in 2025</h1>
     <p>Each dot is one retiree, positioned left-to-right by pension rate. Dots are spread vertically so none overlap. Hover or tap a dot for details.</p>
   </div>
   <div id="controls">
@@ -199,7 +199,7 @@ function render(DATA) {
     .attr('x', width / 2)
     .attr('y', height - 6)
     .attr('text-anchor', 'middle')
-    .text('Pension rate (annual)');
+    .text('Total Pension Benefit');
 
   svg.append('g')
     .attr('class', 'axis')
