@@ -51,41 +51,14 @@
   #controls label {
     color: #444;
   }
-  svg {
+  #chart-canvas-wrap {
+    position: relative;
     width: 100%;
-    height: auto;
+  }
+  canvas#chart {
     display: block;
-  }
-  .dot {
-    fill: #2b6cb0;
-    fill-opacity: 0.55;
-    stroke: #1a4971;
-    stroke-width: 0.4;
-    stroke-opacity: 0.5;
+    width: 100%;
     cursor: pointer;
-    transition: fill-opacity 0.15s, r 0.1s;
-  }
-  .dot.dimmed {
-    fill-opacity: 0.06;
-    stroke-opacity: 0.06;
-  }
-  .dot.highlighted {
-    fill: #e05d2c;
-    fill-opacity: 0.95;
-    stroke: #8a3011;
-    stroke-opacity: 0.9;
-  }
-  .axis text {
-    font-size: 11px;
-    fill: #444;
-  }
-  .axis path, .axis line {
-    stroke: #ccc;
-  }
-  .axis-label {
-    font-size: 12px;
-    fill: #333;
-    font-weight: 600;
   }
   #tooltip {
     position: absolute;
@@ -146,9 +119,9 @@
     <datalist id="agency-list"></datalist>
     <span id="count-readout"></span>
   </div>
-  <div style="position:relative;">
+  <div id="chart-canvas-wrap">
     <div id="loading">Loading chart data…</div>
-    <svg id="chart" style="display:none;"></svg>
+    <canvas id="chart" style="display:none;"></canvas>
     <div id="tooltip"></div>
   </div>
   <div id="footer">Source: NYCERS 2025 pension data, retirees with an annual rate above $100,000 (n = <span id="n-total"></span>).</div>
@@ -173,53 +146,32 @@ function render(DATA) {
   const agencyList = document.getElementById('agency-list');
   agencyList.innerHTML = agencies.map(a => `<option value="${a.replace(/"/g, '&quot;')}">`).join('');
 
-  const width = 1200;
+  // Fixed "design space" coordinate system. The canvas is drawn at this
+  // resolution internally and scaled to whatever width it's embedded at,
+  // same idea as an SVG viewBox.
+  const DESIGN_W = 1200, DESIGN_H = 620;
   const margin = { top: 16, right: 24, bottom: 46, left: 24 };
-  const height = 620;
-  const innerHeight = height - margin.top - margin.bottom;
-
-  const svg = d3.select('#chart')
-    .attr('viewBox', [0, 0, width, height])
-    .attr('preserveAspectRatio', 'xMidYMid meet');
+  const innerHeight = DESIGN_H - margin.top - margin.bottom;
 
   const xScale = d3.scaleLinear()
     .domain([90000, d3.max(DATA, d => d.r) * 1.03])
-    .range([margin.left, width - margin.right]);
+    .range([margin.left, DESIGN_W - margin.right]);
 
   const fmtMoney = d3.format('$,.0f');
   const fmtMoneyShort = v => v >= 1000000 ? '$' + (v/1000000).toFixed(1).replace(/\.0$/,'') + 'M' : '$' + Math.round(v/1000) + 'K';
-
-  svg.append('g')
-    .attr('class', 'axis')
-    .attr('transform', `translate(0,${height - margin.bottom})`)
-    .call(d3.axisBottom(xScale).ticks(8).tickFormat(fmtMoneyShort).tickSizeOuter(0));
-
-  svg.append('text')
-    .attr('class', 'axis-label')
-    .attr('x', width / 2)
-    .attr('y', height - 6)
-    .attr('text-anchor', 'middle')
-    .text('Pension rate (annual)');
-
-  svg.append('g')
-    .attr('class', 'axis')
-    .attr('transform', `translate(0,${margin.top})`)
-    .call(d3.axisTop(xScale).ticks(8).tickFormat('').tickSize(-innerHeight))
-    .call(g => g.select('.domain').remove())
-    .call(g => g.selectAll('line').attr('stroke-opacity', 0.15).attr('transform', `translate(0,${innerHeight})`));
 
   const R = 3.1;
 
   const nodes = DATA.map(d => ({
     data: d,
     x: xScale(d.r),
-    y: height / 2,
+    y: DESIGN_H / 2,
     targetX: xScale(d.r)
   }));
 
   const simulation = d3.forceSimulation(nodes)
     .force('x', d3.forceX(d => d.targetX).strength(1))
-    .force('y', d3.forceY(height / 2).strength(0.045))
+    .force('y', d3.forceY(DESIGN_H / 2).strength(0.045))
     .force('collide', d3.forceCollide(R + 0.6).iterations(2))
     .stop();
 
@@ -227,28 +179,108 @@ function render(DATA) {
   for (let i = 0; i < numTicks; i++) simulation.tick();
 
   const yMin = margin.top + R;
-  const yMax = height - margin.bottom - R;
+  const yMax = DESIGN_H - margin.bottom - R;
   nodes.forEach(d => {
     d.y = Math.max(yMin, Math.min(yMax, d.y));
   });
 
-  const dots = svg.append('g')
-    .selectAll('circle')
-    .data(nodes)
-    .join('circle')
-    .attr('class', 'dot')
-    .attr('cx', d => d.x)
-    .attr('cy', d => d.y)
-    .attr('r', R);
+  // Single spatial index for hit-testing instead of per-point DOM listeners.
+  const quadtree = d3.quadtree().x(d => d.x).y(d => d.y).addAll(nodes);
+  const HIT_RADIUS = 14;
 
-  dots.each(function(d) { d.el = this; });
-
+  const canvas = document.getElementById('chart');
+  const ctx = canvas.getContext('2d');
   const tooltip = d3.select('#tooltip');
   const wrap = document.getElementById('chart-wrap');
-  const svgNode = svg.node();
+  const canvasWrap = document.getElementById('chart-canvas-wrap');
 
-  function showTooltip(event, d) {
-    const rec = d.data;
+  let scale = 1;
+  const dpr = window.devicePixelRatio || 1;
+
+  function resize() {
+    const displayWidth = canvasWrap.clientWidth || DESIGN_W;
+    scale = displayWidth / DESIGN_W;
+    const displayHeight = DESIGN_H * scale;
+    canvas.style.width = displayWidth + 'px';
+    canvas.style.height = displayHeight + 'px';
+    canvas.width = Math.max(1, Math.round(displayWidth * dpr));
+    canvas.height = Math.max(1, Math.round(displayHeight * dpr));
+    draw();
+  }
+
+  function draw() {
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+    ctx.clearRect(0, 0, DESIGN_W, DESIGN_H);
+
+    // gridlines + x-axis ticks
+    const ticks = xScale.ticks(8);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ticks.forEach(t => {
+      const x = xScale(t);
+      ctx.beginPath();
+      ctx.moveTo(x, margin.top);
+      ctx.lineTo(x, DESIGN_H - margin.bottom);
+      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = '#444';
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
+      ctx.fillText(fmtMoneyShort(t), x, DESIGN_H - margin.bottom + 6);
+    });
+
+    ctx.strokeStyle = '#ccc';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(margin.left, DESIGN_H - margin.bottom);
+    ctx.lineTo(DESIGN_W - margin.right, DESIGN_H - margin.bottom);
+    ctx.stroke();
+
+    ctx.fillStyle = '#333';
+    ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('Total Pension Benefit', DESIGN_W / 2, DESIGN_H - 6);
+
+    // dots: draw normal ones first, then the active/highlighted one(s) on top
+    ctx.lineWidth = 0.4;
+    let activeNode = null;
+    for (const n of nodes) {
+      const highlighted = n.data.__highlighted;
+      const dimmed = n.data.__dimmed;
+      if (n === active) { activeNode = n; continue; }
+      const r = highlighted ? R * 1.9 : R;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      if (dimmed) {
+        ctx.fillStyle = 'rgba(43,108,176,0.06)';
+        ctx.strokeStyle = 'rgba(26,73,113,0.06)';
+      } else if (highlighted) {
+        ctx.fillStyle = 'rgba(224,93,44,0.95)';
+        ctx.strokeStyle = 'rgba(138,48,17,0.9)';
+      } else {
+        ctx.fillStyle = 'rgba(43,108,176,0.55)';
+        ctx.strokeStyle = 'rgba(26,73,113,0.5)';
+      }
+      ctx.fill();
+      ctx.stroke();
+    }
+    if (activeNode) {
+      ctx.beginPath();
+      ctx.arc(activeNode.x, activeNode.y, R * 1.9, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(224,93,44,0.95)';
+      ctx.strokeStyle = 'rgba(138,48,17,0.9)';
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  window.addEventListener('resize', resize);
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => resize()).observe(canvasWrap);
+  }
+
+  function showTooltip(clientX, clientY, node) {
+    const rec = node.data;
     const backpayLine = rec.b !== null && rec.b !== undefined
       ? fmtMoney(rec.b)
       : 'Not disclosed';
@@ -259,84 +291,80 @@ function render(DATA) {
       `<div class="t-rate">Total Pension Benefit: ${fmtMoney(rec.r)}</div>` +
       `<div class="t-backpay">BackPay: ${backpayLine}</div>`
     );
-    positionTooltip(event);
+    positionTooltip(clientX, clientY);
     tooltip.style('opacity', 1);
   }
 
-  function positionTooltip(event) {
-    const svgRect = svgNode.getBoundingClientRect();
-    const clientX = event.clientX, clientY = event.clientY;
-    let left = clientX - svgRect.left + 14;
-    let top = clientY - svgRect.top - 10;
+  function positionTooltip(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    let left = clientX - rect.left + 14;
+    let top = clientY - rect.top - 10;
     const tw = 260, th = 115;
-    if (left + tw > svgRect.width) left = clientX - svgRect.left - tw - 14;
-    if (top + th > svgRect.height) top = svgRect.height - th - 4;
+    if (left + tw > rect.width) left = clientX - rect.left - tw - 14;
+    if (top + th > rect.height) top = rect.height - th - 4;
     tooltip.style('left', left + 'px').style('top', top + 'px');
   }
 
-  // Single listener + spatial index instead of one listener per dot: far fewer
-  // event bindings (fast on 3,000+ points) and forgiving hit-testing so you
-  // don't have to land the cursor pixel-perfectly on a 3px dot.
-  const quadtree = d3.quadtree().x(d => d.x).y(d => d.y).addAll(nodes);
-  const HIT_RADIUS = 14;
-  let active = null;
-  let pinned = false; // true after a click; keeps the tooltip open regardless
-                       // of hover, since mousemove-based hover can be unreliable
-                       // inside embedded iframes on some hosting setups.
-
-  function restoreSize(node) {
-    d3.select(node.el).attr('r', node.data.__highlighted ? R * 1.9 : R);
+  function designCoords(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    return [(clientX - rect.left) / scale, (clientY - rect.top) / scale];
   }
 
-  function setActive(node, event) {
+  let active = null;
+  let pinned = false; // true after a click; keeps the tooltip open regardless
+                       // of hover, since hover reliability varies across
+                       // embedded-iframe / host-page conditions.
+
+  function setActive(node, clientX, clientY) {
     if (active !== node) {
-      if (active) restoreSize(active);
       active = node;
-      d3.select(node.el).attr('r', R * 1.9).raise();
+      draw();
     }
-    showTooltip(event, node);
+    showTooltip(clientX, clientY, node);
   }
 
   function clearActive() {
     if (pinned) return;
     if (active) {
-      restoreSize(active);
       active = null;
+      draw();
     }
     tooltip.style('opacity', 0);
   }
 
-  svg
-    .on('mousemove', function(event) {
-      if (pinned) return;
-      const [mx, my] = d3.pointer(event, svgNode);
-      const found = quadtree.find(mx, my, HIT_RADIUS);
-      if (found) setActive(found, event); else clearActive();
-    })
-    .on('mouseleave', clearActive)
-    .on('click', function(event) {
-      const [mx, my] = d3.pointer(event, svgNode);
-      const found = quadtree.find(mx, my, HIT_RADIUS);
-      if (found) {
-        if (pinned && active === found) {
-          pinned = false;
-          clearActive();
-        } else {
-          pinned = true;
-          setActive(found, event);
-        }
-      } else {
+  canvas.addEventListener('mousemove', function(event) {
+    if (pinned) return;
+    const [mx, my] = designCoords(event.clientX, event.clientY);
+    const found = quadtree.find(mx, my, HIT_RADIUS);
+    if (found) setActive(found, event.clientX, event.clientY); else clearActive();
+  });
+  canvas.addEventListener('mouseleave', clearActive);
+  canvas.addEventListener('click', function(event) {
+    const [mx, my] = designCoords(event.clientX, event.clientY);
+    const found = quadtree.find(mx, my, HIT_RADIUS);
+    if (found) {
+      if (pinned && active === found) {
         pinned = false;
         clearActive();
+      } else {
+        pinned = true;
+        setActive(found, event.clientX, event.clientY);
       }
-    })
-    .on('touchstart touchmove', function(event) {
-      const touch = event.touches[0];
-      if (!touch) return;
-      const [mx, my] = d3.pointer(touch, svgNode);
-      const found = quadtree.find(mx, my, HIT_RADIUS);
-      if (found) setActive(found, touch);
-    });
+    } else {
+      pinned = false;
+      clearActive();
+    }
+  });
+  canvas.addEventListener('touchstart', function(event) {
+    const touch = event.touches[0];
+    if (!touch) return;
+    const [mx, my] = designCoords(touch.clientX, touch.clientY);
+    const found = quadtree.find(mx, my, HIT_RADIUS);
+    if (found) {
+      pinned = true;
+      setActive(found, touch.clientX, touch.clientY);
+    }
+  }, { passive: true });
 
   const searchInput = document.getElementById('search');
   const countReadout = document.getElementById('count-readout');
@@ -344,24 +372,24 @@ function render(DATA) {
   searchInput.addEventListener('input', function() {
     const q = this.value.trim().toLowerCase();
     if (!q) {
-      dots.classed('dimmed', false).classed('highlighted', false).attr('r', R);
-      nodes.forEach(d => { d.__highlighted = false; });
+      nodes.forEach(d => { d.data.__highlighted = false; d.data.__dimmed = false; });
       countReadout.textContent = '';
+      draw();
       return;
     }
     let matches = 0;
-    dots.each(function(d) {
+    nodes.forEach(d => {
       const rec = d.data;
       const hit = rec.n.toLowerCase().includes(q) || rec.a.toLowerCase().includes(q);
-      d.__highlighted = hit;
-      d3.select(this)
-        .classed('dimmed', !hit)
-        .classed('highlighted', hit)
-        .attr('r', hit ? R * 1.9 : R);
+      rec.__highlighted = hit;
+      rec.__dimmed = !hit;
       if (hit) matches++;
     });
     countReadout.textContent = matches + ' match' + (matches === 1 ? '' : 'es');
+    draw();
   });
+
+  resize();
 }
 </script>
 </body>
