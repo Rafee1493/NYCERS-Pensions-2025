@@ -3,13 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NYCERS Retirees Over $100,000 — Total Pension Benefit</title>
+<title>NYCERS Retirees Over $100,000 — Pension Rate</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <style>
   html, body {
     margin: 0;
     padding: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-family: 'Roboto', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     background: #ffffff;
     color: #1a1a1a;
   }
@@ -23,8 +26,8 @@
     margin-bottom: 4px;
   }
   #chart-header h1 {
-    font-size: 18px;
-    font-weight: 700;
+    font-size: 22px;
+    font-weight: 500;
     margin: 0 0 2px;
     line-height: 1.3;
   }
@@ -110,8 +113,8 @@
 <body>
 <div id="chart-wrap">
   <div id="chart-header">
-    <h1>NYCERS Retirees Over $100,000 — Total Pension Benefit</h1>
-    <p>Each dot is one retiree, positioned left-to-right by total pension received. Dots are spread vertically so none overlap. Click (or tap) a dot for details — click again to close.</p>
+    <h1>NYCERS Retirees Over $100,000 — Pension Rate</h1>
+    <p>Each dot is one retiree, positioned left-to-right by pension rate. Dots are spread vertically so none overlap. Click (or tap) a dot for details — click again to close.</p>
   </div>
   <div id="controls">
     <label for="search">Search name or agency:</label>
@@ -208,6 +211,14 @@ function render(DATA) {
     draw();
   }
 
+  // Desired on-screen text sizes, in real CSS pixels — held constant no
+  // matter how narrow the embed is. Canvas text is drawn in design-space
+  // units and the whole canvas is scaled to fit its container, so a fixed
+  // design-space font size shrinks along with a narrow embed. Dividing by
+  // `scale` here cancels that out.
+  const AXIS_TICK_FONT = 12;
+  const AXIS_TITLE_FONT = 13;
+
   function draw() {
     ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
     ctx.clearRect(0, 0, DESIGN_W, DESIGN_H);
@@ -222,24 +233,24 @@ function render(DATA) {
       ctx.moveTo(x, margin.top);
       ctx.lineTo(x, DESIGN_H - margin.bottom);
       ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1 / scale;
       ctx.stroke();
       ctx.fillStyle = '#444';
-      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
-      ctx.fillText(fmtMoneyShort(t), x, DESIGN_H - margin.bottom + 6);
+      ctx.font = (AXIS_TICK_FONT / scale) + "px 'Roboto', -apple-system, BlinkMacSystemFont, \"Segoe UI\", Helvetica, Arial, sans-serif";
+      ctx.fillText(fmtMoneyShort(t), x, DESIGN_H - margin.bottom + (6 / scale));
     });
 
     ctx.strokeStyle = '#ccc';
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1 / scale;
     ctx.beginPath();
     ctx.moveTo(margin.left, DESIGN_H - margin.bottom);
     ctx.lineTo(DESIGN_W - margin.right, DESIGN_H - margin.bottom);
     ctx.stroke();
 
     ctx.fillStyle = '#333';
-    ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
+    ctx.font = '600 ' + (AXIS_TITLE_FONT / scale) + "px 'Roboto', -apple-system, BlinkMacSystemFont, \"Segoe UI\", Helvetica, Arial, sans-serif";
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText('Total Pension Benefit', DESIGN_W / 2, DESIGN_H - 6);
+    ctx.fillText('Total Pension Benefit', DESIGN_W / 2, DESIGN_H - (6 / scale));
 
     // dots: draw normal ones first, then the active/highlighted one(s) on top
     ctx.lineWidth = 0.4;
